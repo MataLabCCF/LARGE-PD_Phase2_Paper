@@ -4,8 +4,11 @@ This repository contains a detailed description of all analyses performed as par
 The analyses documented here include:
 
 🧬 Genotyping Quality Control (QC)
+
 🌍 Global and Local Ancestry Inference
-📊 Genome-Wide Association Studies (GWAS)
+
+📊 Genome-Wide Association Studies (GWAS) and Admixture Mapping
+
 🌐 Trans-ethnic Meta-analysis
 
 # Genotyping calling
