@@ -722,7 +722,7 @@ python GENESIS_AM.py \
 
 ```
 
-Note: The author of the python scripts (Thiago Peixoto Leal) apologizes for not using pandas. Sometimes, pure Python gets the job done—just not elegantly. 😅
+Note: The author of the python scripts (Thiago Peixoto Leal) apologizes for not using pandas. Sometimes, pure Python gets the job done 😅
 
 ## Meta-analysis with GWAMA
     
