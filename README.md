@@ -722,11 +722,1098 @@ python GENESIS_AM.py \
 
 ```
 
-Note: The author of the python scripts (Thiago Peixoto Leal) apologizes for not using pandas. Sometimes, pure Python gets the job done 😅
+Note: The author of the python scripts (Thiago Peixoto Leal) apologizes for not using pandas. Sometimes, pure Python gets the job done—just not elegantly. 😅
 
 ## Meta-analysis with GWAMA
+### General framework
+
+First, create the working directory for the meta-analysis 
+```
+mkdir LPD_meta-analysis/
+```
+For running the meta-analysis using GWAMA, the sumstats from each cohort intended to meta-analyze must have a given format that match the headers expected by GWAMA. Once the format is achieved, run the python scripts Meta-analysis_SAIGE.py and Meta-analysis_admixkit.py. 
+
+The process to manipulate the output sumstats from GWAMA in order to plot them is outlined as well. 
+
+When running the scripts: Meta-analysis_SAIGE.py and Meta-analysis_admixkit.py, please take into account the following flags and options in order to run your desired meta-analysis:
+
+    Options 
+
+    -l, --list, help='List of hybrid files. Format: <NAME> <HYBRID> <PGEN prefix file> (mandatory) 
+    -f, --folder, specify the name of the output folder you want (mandatory) 
+    -n, --name, to specify the name of the output file (mandatory)
+    -G, --gwama, Path to gwama (mandatory)
+    -P, --plink2, Path to PLINK2 (mandatory)
+    -o, --odds, Use OR instead BETA (by default, BETA) (optional)
+    -F, --firth, Signalize that we used firth on PLINK2 (optional)
+    -s, --sex, Run gender-differentiated and gender-heterogeneity analysis (optional)
+    -r, --random, Random effect correction from GWAMA (optional, by default a fixed-effect meta-analysis is done)
+    -g, --genomic, Use genomic control for adjusting studies result files from GWAMA (optional)
+
+### GWAMA using SAIGE sumstats
+
+Genotype-Phenotype association softwares like SAIGE and the Admix-kit suite output summary statistics for each chromosome, you must merge them in a single file (here the file is called SAIGE_ALL_1-10.txt). 
+GWAMA expects the sample size in an additional column inside the sumstats, this could be fixed using a a simple command-line argument in bash like this:
+
+
+
+```
+awk 'BEGIN {OFS="\t"} NR==1 {print $0, "N"; next} {print $0, 1485}' /home/output/Association/SAIGE/Output/SAIGE_P1_ALL_1-10.txt >  /home/output/Association/SAIGE/Output/SAIGE_P1_ALL_1-10_N.txt
+
+awk 'BEGIN {OFS="\t"} NR==1 {print $0, "N"; next} {print $0, 4303}' /home/output/Association/SAIGE/Output/SAIGE_P2_ALL_1-10.txt >  /home/output/Association/SAIGE/Output/SAIGE_P2_ALL_1-10_N.txt
+```
     
     
+This will add the number of samples of that study in the last column. You must do this for the total number of sumstats files intended to meta-analyze (this same process is aplicable to ATT phase 1 and 2, TRACTOR_NAT phase 1 and 2, TRACTOR_AFR phase 1 and 2, TRACTOR_EUR phase 1 and phase 2 sumstats as well).
+
+Example of the expected header to run Meta-analysis_SAIGE.py:
+    
+    ID	Chrom	Pos	Allele1	Allele2	P	BETA	SE	OR	U95	L95	N
+    rs200188737	1	730869	C	T	4.529689E-01	0.351674	0.468602	1.4214450570890105	3.56132946366326970.5673460068601568	1485
+    rs61769351	1	758443	G	C	5.893046E-01	-0.0909793	0.168529	0.9130366105614922	1.27040727749360770.6561957468240437	1485
+    rs745495619	1	762107	A	C	7.755619E-01	-0.0739648	0.259428	0.9287043836602479	1.544212512869177	0.5585318245007834	1485
+    rs1221434219	1	763097	C	T	5.617923E-01	0.283	0.487779	1.3271051618171572	3.4523212814705655	0.5101518563682264	1485
+    rs535793062	1	767578	T	C	3.673955E-01	0.432908	0.480281	1.541734374613348	3.95214614811429450.6014314230253184	1485
+    rs142559957	1	769257	G	A	4.220278E-01	-0.126379	0.157401	0.8812807780665058	1.19976650656652820.6473391326885151	1485
+    rs992276675	1	769283	G	A	5.726310E-01	0.390115	0.691471	1.477150656440849	5.728181754280549	0.3809191389908478	1485
+
+
+After this, within the working directory, create a text file (input_list.txt) with the path for the input sumstats and the plink files containing the genetic information (in order to annotate the allele frequencies of each SNP to run GWAMA and downstream tools, this is made by the python script)(this same process is aplicable to admixkit meta-analysis as well):
+    
+```
+> input_list_SAIGE_Meta_LPDs.txt
+    
+P1 SAIGE_P1_ALL_1-10_N.txt /home/output/Association/SAIGE/PLINK/LPD_Phase1.bed/bim.fam
+P2 SAIGE_P2_ALL_1-10_N.txt /home/output/Association/SAIGE/PLINK/LPD_Phase2.bed/bim.fam
+```
+   
+
+
+Now you are ready to run the Meta-analysis_SAIGE.py script with the adequate flags depending on the intended meta-analysis. This is the example for running a random-effects meta-analysis with SAIGE results, without genomic control and indicating that the Firth correction was implemented (SAIGE includes this correction in the logistic regression itself):
+    
+```
+python Meta-analysis_SAIGE_results.py -l input_list_SAIGE_Meta_LPDs.txt -f GWAMA_SAIGE -n GWAMA_SAIGE_results -o -F -r -G /home/programs/GWAMA -P /home/programs/plink2
+```
+
+This script will reformat the sumstats in the way GWAMA expects them, it generates two files called inputP1.in and inputP2.in, for phase 1 and phase 2 in each meta-analysis. This files will prove to be useful when running the Meta-analysis with meta-regression with SAS PD GWASs and LARGE-PD cohorts (see further section)
+
+    
+<details>
+    <summary>Meta-analysis_SAIGE.py</summary>
+            
+```python=
+import numpy as np
+import argparse
+import os
+
+def openListFile(fileName, sex):
+    dictFiles = {}
+
+    listFile = open(fileName)
+
+    for fileLine in listFile:
+        split = fileLine.strip().split()
+        if not sex:
+            if len(split) == 3:
+                dictFiles[split[0]] = {}
+                dictFiles[split[0]]["hybrid"] = split[1]
+                dictFiles[split[0]]["pgen"] = split[2]
+            else:
+                print(f"Ignoring line {fileLine} because it has only ({len(split)} columns)")
+        else:
+            if len(split) == 4:
+                dictFiles[split[0]] = {}
+                dictFiles[split[0]]["hybrid"] = split[1]
+                dictFiles[split[0]]["pgen"] = split[2]
+                dictFiles[split[0]]["sex"] = split[3]
+            else:
+                print(f"Ignoring line {fileLine} because it has only ({len(split)} columns)")
+    print (dictFiles)
+    return dictFiles
+    
+
+def execute(command):
+    print(command)
+    os.system(command)
+
+def calculateFrq(fileDict, plink2, folder):
+    freqDict = {}
+    for pop in fileDict:
+        pgenFile = fileDict[pop]["pgen"]
+
+        command = f"{plink2} --pfile {pgenFile} --freq --out {folder}/{pop}_freq"
+        execute(command)
+
+        # open the .afreq file once, read its header, and build a name→index map
+        path = f"{folder}/{pop}_freq.afreq"
+        with open(path) as file:
+            header = file.readline().strip().split()
+            idx    = { name: i for i, name in enumerate(header) }
+
+            # now process each data line exactly as before…
+            for line in file:
+                split = line.strip().split()
+
+                # SNP ID is still at split[1], but you *could* also do:
+                #   snp = split[idx["ID"]]
+                snp = split[1]
+
+                if snp not in freqDict:
+                    freqDict[snp] = {}
+                if pop not in freqDict[snp]:
+                    freqDict[snp][pop] = {}
+
+                    # replace hard-coded 3 and 4 with the header names
+                    freqDict[snp][pop]["ALT"]      = split[idx["ALT"]]
+                    freqDict[snp][pop]["ALT_FREQ"] = split[idx["ALT_FREQS"]]
+
+    return freqDict
+
+def getStatus(fileDict):
+    statusDict = {}
+    for pop in fileDict:
+        pgenFile = fileDict[pop]["pgen"]
+        pvarFile = open(f"{pgenFile}.pvar")
+
+        header = True
+        for line in pvarFile:
+            if header:
+                if "#CHROM" in line:
+                    header = False
+            else:
+                split = line.strip().split()
+                if split[2] not in statusDict:
+                    statusDict[split[2]] = {}
+                else:
+                    print (f"duplicate {split[2]}")
+                if pop not in statusDict[split[2]]:
+                    if "TYPED" in line:
+                        statusDict[split[2]][pop] = 0
+                    else:
+                        statusDict[split[2]][pop] = 1
+    return statusDict
+
+def getPositionCol(headerLine):
+    dictFields = {}
+    split = headerLine.strip().split()
+
+    interest =  ["ID", "Chrom", "Pos", "Allele1", "Allele2", "Allele2", "P", "SE", "OR", "U95", "L95", "N"]
+
+    for i in range(0, len(split)):
+        if split[i] in interest:
+            print(f"Col {split[i]} -> index {i}")
+            dictFields[split[i]] = i
+
+    return dictFields
+
+def prepareInputGWAMAOR(fileDict, freqDict, statusDict, folder, name, sex):
+    fileToGWAMA = open(f"{folder}/input{name}.in", 'w')
+    missingSNPs = open(f"{folder}/missing_snps.txt", 'w')
+
+    for pop in fileDict:
+        fileOut = open(f"{folder}/input{pop}.in", 'w')
+        if sex:
+            fileToGWAMA.write(f"{folder}/input{pop}.in\t{fileDict[pop]['sex']}\n")
+        else:
+            fileToGWAMA.write(f"{folder}/input{pop}.in\n")
+
+        fileOut.write("MARKERNAME\tCHR\tPOS\tIMPUTED\tN\tEA\tNEA\tEAF\tOR\tOR_95L\tOR_95U\n")
+
+        hybrid = fileDict[pop]["hybrid"]
+        print(f"Open {hybrid} file")
+
+        fileHybrid = open(hybrid)
+        header = True
+
+        for line in fileHybrid:
+            if header:
+                dictColHeader = getPositionCol(line)
+                header = False
+            else:
+                split = line.strip().split()
+                if split[dictColHeader["OR"]] != "NA":
+                    ID = split[dictColHeader["ID"]]
+
+                    # Skip missing SNPs while logging them
+                    if ID not in statusDict or pop not in statusDict[ID]:
+                        missingSNPs.write(f"{ID}\t{pop}\n")
+                        continue
+
+                    CHR = split[dictColHeader["Chrom"]]
+                    POS = split[dictColHeader["Pos"]]
+                    IMPUTED = statusDict[ID][pop]
+                    N = split[dictColHeader["N"]]
+                    EA = split[dictColHeader["Allele2"]]
+                    NEA = split[dictColHeader["Allele1"]] if EA == split[dictColHeader["Allele2"]] else split[dictColHeader["Allele2"]]
+
+                    if ID in freqDict and pop in freqDict[ID]:
+                        if EA == freqDict[ID][pop]["ALT"]:
+                            EAF = freqDict[ID][pop]["ALT_FREQ"]
+                        else:
+                            EAF = 1 - float(freqDict[ID][pop]["ALT_FREQ"])
+                    else:
+                        missingSNPs.write(f"{ID}\t{pop}\n")
+                        continue
+
+                    OR = split[dictColHeader["OR"]]
+                    OR_95L = split[dictColHeader["L95"]]
+                    OR_95U = split[dictColHeader["U95"]]
+
+                    fileOut.write(f"{ID}\t{CHR}\t{POS}\t{IMPUTED}\t{N}\t{EA}\t{NEA}\t{EAF}\t{OR}\t{OR_95L}\t{OR_95U}\n")
+
+        fileOut.close()
+
+    missingSNPs.close()
+    return f"{folder}/input{name}.in"
+
+
+def prepareInputGWAMABeta(fileDict, freqDict, statusDict, folder, name, sex):
+    fileToGWAMA = open(f"{folder}/input{name}.in", 'w')
+    missingSNPs = open(f"{folder}/missing_snps.txt", 'w')
+
+    for pop in fileDict:
+        fileOut = open(f"{folder}/input{pop}.in", 'w')
+        if sex:
+            fileToGWAMA.write(f"{folder}/input{pop}.in\t{fileDict[pop]['sex']}\n")
+        else:
+            fileToGWAMA.write(f"{folder}/input{pop}.in\n")
+
+        fileOut.write("MARKERNAME\tCHR\tPOS\tIMPUTED\tN\tEA\tNEA\tEAF\tBETA\tSE\n")
+
+        hybrid = fileDict[pop]["hybrid"]
+        print(f"Open {hybrid} file")
+
+        fileHybrid = open(hybrid)
+        header = True
+
+        for line in fileHybrid:
+            if header:
+                dictColHeader = getPositionCol(line)
+                header = False
+            else:
+                split = line.strip().split()
+                if split[dictColHeader["OR"]] != "NA":
+                    ID = split[dictColHeader["ID"]]
+
+                    # Skip missing SNPs while logging them
+                    if ID not in statusDict or pop not in statusDict[ID]:
+                        missingSNPs.write(f"{ID}\t{pop}\n")
+                        continue
+
+                    CHR = split[dictColHeader["Chrom"]]
+                    POS = split[dictColHeader["Pos"]]
+                    IMPUTED = statusDict[ID][pop]
+                    N = split[dictColHeader["N"]]
+                    EA = split[dictColHeader["Allele2"]]
+                    NEA = split[dictColHeader["Allele1"]] if EA == split[dictColHeader["Allele2"]] else split[dictColHeader["Allele2"]]
+
+                    if ID in freqDict and pop in freqDict[ID]:
+                        if EA == freqDict[ID][pop]["ALT"]:
+                            EAF = freqDict[ID][pop]["ALT_FREQ"]
+                        else:
+                            EAF = 1 - float(freqDict[ID][pop]["ALT_FREQ"])
+                    else:
+                        missingSNPs.write(f"{ID}\t{pop}\n")
+                        continue
+
+                    BETA = np.log(float(split[dictColHeader["OR"]]))
+                    SE = split[dictColHeader["SE"]]
+
+                    fileOut.write(f"{ID}\t{CHR}\t{POS}\tIMPUTED\tN\tEA\tNEA\tEAF\tBETA\tSE\n")
+
+        fileOut.close()
+
+    missingSNPs.close()
+    return f"{folder}/input{name}.in"
+
+
+def runGWAMABeta(fileGWAMA, gwama, folder, name, randomEffectCorrection, genomicControl, sex):
+    line = f"{gwama} -i {fileGWAMA} -o {folder}/{name} -qt"
+    if randomEffectCorrection:
+        line = f"{line} -r"
+    if genomicControl:
+        line = f"{line} -gc"
+    if sex:
+        line = f"{line} --sex"
+
+    execute(line)
+
+def runGWAMAOR(fileGWAMA, gwama, folder, name, randomEffectCorrection, genomicControl, sex):
+    line = f"{gwama} -i {fileGWAMA} -o {folder}/{name}"
+    if randomEffectCorrection:
+        line = f"{line} -r"
+    if genomicControl:
+        line = f"{line} -gc"
+    if sex:
+        line = f"{line} --sex"
+
+
+    execute(line)
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='GWAMA automatic')
+
+    required = parser.add_argument_group("Required arguments")
+    required.add_argument('-l', '--list', help='List of hybrid files. Format: <NAME> <HYBRID> <PGEN prefix file>',
+                          required=True)
+    required.add_argument('-f', '--folder', help='Output folder name', required=True)
+    required.add_argument('-n', '--name', help='Name to output file', required=True)
+
+    optional = parser.add_argument_group("Optional arguments")
+    optional.add_argument('-o', '--odds', help='Use OR instead BETA (Default: False)', default=False, action="store_true")
+    optional.add_argument('-F', '--firth', help='Signalize that we used firth on PLINK2', default=False,
+                          action="store_true")
+    optional.add_argument('-s', '--sex', help='Run gender-differentiated and gender-heterogeneity analysis (Default: False)', default=False,
+                          action="store_true")
+    optional.add_argument('-r', '--random', help='Random effect correction from GWAMA (Default: False)', default=False,
+                          action="store_true")
+    optional.add_argument('-g', '--genomic', help='Use genomic control for adjusting studies result files from GWAMA (Default: False)', default=False,
+                          action="store_true")
+
+    programs = parser.add_argument_group("Programs")
+    programs.add_argument('-G', '--gwama', help='Path to gwama', required=True)
+    programs.add_argument('-P', '--plink2', help='Path to PLINK2', required=True)
+    args = parser.parse_args()
+
+    execute(f"mkdir {args.folder}")
+
+    fileDict = openListFile(args.list, args.sex)
+    freqDict = calculateFrq(fileDict, args.plink2, args.folder)
+    statusDict = getStatus(fileDict)
+    if args.odds:
+        fileGWAMA = prepareInputGWAMAOR(fileDict, freqDict, statusDict, args.folder, args.name, args.sex)
+        runGWAMAOR(fileGWAMA, args.gwama, args.folder, args.name, args.random, args.genomic, args.sex)
+    else:
+        fileGWAMA = prepareInputGWAMABeta(fileDict, freqDict, statusDict, args.folder, args.name, args.sex)
+        runGWAMABeta(fileGWAMA, args.gwama, args.folder, args.name, args.random, args.genomic, args.sex)
+
+```
+</details>
+
+
+
+
+Particularly the script for running SAIGE meta-analysis has some changes when compared to the scripts needed to run ATT and TRACTOR meta-analyses. These specific changes account for the issue of missing rsIDs for some specific variants in the sumstats of SAIGE results. Given the recent changes of ID labeling of variants by the imputation server TopMed, a bunch of variants do not have an rsID yet, and still have the old identification label. So, when applying the formatting for GWAMA, they appear to be missing. 
+
+In order to handle this issue, an aditional step is added inside the script: Meta-analysis_SAIGE.py. This adjustment, helps to identify the variants with the old identification label and saves them in the missing_snps.txt output file. 
+
+Furthermore, it was necessary to inspect if some of those variants were statistically significant (because they are excluded from the analysis by GWAMA). Using the script: annotate_missing_variants_SAIGE.py, the p-value for each of those variants comming from the original sumstats is appended, so one can visually inspect if some significant variants were ineed excluded from the meta-analysis. After running the script, the variants are exported and sorted by p-value in a new text file (called annotated_missing_IDs.txt) like this:
+
+    ID	Population	P
+    chr6:2860729:C:T	P2	0.0005699132
+    chr19:11654035:T:C	P2	0.0007023961
+    chr19:11605131:T:C	P2	0.0007710347
+    chr19:11747510:C:T	P2	0.001188544
+    chr12:132435728:A:G	P2	0.00146866
+    chr7:6619559:C:T	P1	0.001721198
+    chr15:98118198:A:T	P2	0.001874586
+    chr7:6616664:G:A	P1	0.002014589
+    chr12:132459846:G:A	P2	0.002282474
+
+In this way, is evident that none of the variants in question have a genome-wide significant p-value, so we can keep working with the output SAIGE GWAMA sumstats for plotting.
+    
+### GWAMA using ATT and TRACTOR sumstats
+The workflow for running GWAMA with these results is the same as outlined with the SAIGE meta-analysis example. However, the step for checking the significance of variants with old identification IDs from TopMed can be avoided because within the ATT and TRACTOR workflow, this problem is not present inside the plink files generated to include local ancestry. 
+
+For either ATT and TRACTOR meta-analysis you could use this script: Meta-analysis_admixkit.py. 
+Just remember to append the adequate sample size for the UNO dataset (1419 for phase 1 and 4086 for phase 2). And, do not forget to update the names and paths to be included in the input list. Finally, use the desired flags when running the python script. 
+
+    
+<details>
+    <summary>Meta-analysis_admixkit.py</summary>
+            
+```python=
+import numpy as np
+import argparse
+import os
+
+def openListFile(fileName, sex):
+    dictFiles = {}
+
+    listFile = open(fileName)
+
+    for fileLine in listFile:
+        split = fileLine.strip().split()
+        if not sex:
+            if len(split) == 3:
+                dictFiles[split[0]] = {}
+                dictFiles[split[0]]["hybrid"] = split[1]
+                dictFiles[split[0]]["pgen"] = split[2]
+            else:
+                print(f"Ignoring line {fileLine} because it has only ({len(split)} columns)")
+        else:
+            if len(split) == 4:
+                dictFiles[split[0]] = {}
+                dictFiles[split[0]]["hybrid"] = split[1]
+                dictFiles[split[0]]["pgen"] = split[2]
+                dictFiles[split[0]]["sex"] = split[3]
+            else:
+                print(f"Ignoring line {fileLine} because it has only ({len(split)} columns)")
+
+    return dictFiles
+
+def execute(command):
+    print(command)
+    os.system(command)
+
+def calculateFrq(fileDict, plink2, folder):
+    freqDict = {}
+    for pop in fileDict:
+        pgenFile = fileDict[pop]["pgen"]
+
+        command = f"{plink2} --pfile {pgenFile} --freq --out {folder}/{pop}_freq"
+        execute(command)
+
+        file = open(f"{folder}/{pop}_freq.afreq")
+        for line in file:
+            split = line.strip().split()
+            if split[1] not in freqDict:
+                freqDict[split[1]] = {}
+            if pop not in freqDict[split[1]]:
+                freqDict[split[1]][pop] = {}
+                freqDict[split[1]][pop]["ALT"] = split[3]
+                freqDict[split[1]][pop]["ALT_FREQ"] = split[4]
+    return freqDict
+
+def getStatus(fileDict):
+    statusDict = {}
+    for pop in fileDict:
+        pgenFile = fileDict[pop]["pgen"]
+        pvarFile = open(f"{pgenFile}.pvar")
+
+        header = True
+        for line in pvarFile:
+            if header:
+                if "#CHROM" in line:
+                    header = False
+            else:
+                split = line.strip().split()
+                if split[2] not in statusDict:
+                    statusDict[split[2]] = {}
+                if pop not in statusDict[split[2]]:
+                    if "TYPED" in line:
+                        statusDict[split[2]][pop] = 0
+                    else:
+                        statusDict[split[2]][pop] = 1
+    return statusDict
+
+def getPositionCol(headerLine):
+    dictFields = {}
+    split = headerLine.strip().split()
+
+    interest =  ["ID", "Chrom", "Pos", "Allele1", "Allele2", "Allele2", "P", "SE", "OR", "U95", "L95", "N"]
+
+    for i in range(0, len(split)):
+        if split[i] in interest:
+            print(f"Col {split[i]} -> index {i}")
+            dictFields[split[i]] = i
+
+    return dictFields
+
+def prepareInputGWAMAOR(fileDict, freqDict, statusDict, folder, name, sex):
+    fileToGWAMA = open(f"{folder}/input{name}.in", 'w')
+
+    for pop in fileDict:
+        fileOut = open(f"{folder}/input{pop}.in", 'w')
+        if sex:
+            fileToGWAMA.write(f"{folder}/input{pop}.in\t{fileDict[pop]['sex']}\n")
+        else:
+            fileToGWAMA.write(f"{folder}/input{pop}.in\n")
+        #fileOut.write("MARKERNAME\tCHR\tPOS\tIMPUTED\tN\tEA\tNEA\tEAF\tBETA\tSE\n")
+        fileOut.write("MARKERNAME\tCHR\tPOS\tIMPUTED\tN\tEA\tNEA\tEAF\tOR\tOR_95L\tOR_95U\n")
+        #fileOut.write("MARKERNAME\tCHR\tPOS\tIMPUTED\tN\tEA\tNEA\tOR\tOR_95L\tOR_95U\n")
+
+        hybrid = fileDict[pop]["hybrid"]
+
+        print(f"Open {hybrid} file")
+
+        fileHybrid = open(hybrid)
+        header = True
+
+        for line in fileHybrid:
+            if header:
+                dictColHeader = getPositionCol(line)
+                header = False
+            else:
+                split = line.strip().split()
+                if split[dictColHeader["OR"]] != "NA":
+                    ID = split[dictColHeader["ID"]]
+                    CHR = split[dictColHeader["Chrom"]]
+                    POS = split[dictColHeader["Pos"]]
+                    IMPUTED = statusDict[ID][pop]
+                    N = split[dictColHeader["N"]]
+                    EA = split[dictColHeader["Allele2"]]
+                    if EA == split[dictColHeader["Allele2"]]:
+                        NEA = split[dictColHeader["Allele1"]]
+                    else:
+                        NEA = split[dictColHeader["Allele2"]]
+
+                    if EA == freqDict[ID][pop]["ALT"]:
+                        EAF = freqDict[ID][pop]["ALT_FREQ"]
+                    else:
+                        EAF = 1-float(freqDict[ID][pop]["ALT_FREQ"])
+
+                    OR = split[dictColHeader["OR"]]
+                    OR_95L = split[dictColHeader["L95"]]
+                    OR_95U = split[dictColHeader["U95"]]
+
+                    fileOut.write(f"{ID}\t{CHR}\t{POS}\t{IMPUTED}\t{N}\t{EA}\t{NEA}\t{EAF}\t{OR}\t{OR_95L}\t{OR_95U}\n")
+        fileOut.close()
+    return f"{folder}/input{name}.in"
+
+
+def prepareInputGWAMABeta(fileDict, freqDict, statusDict, folder, name, sex):
+    fileToGWAMA = open(f"{folder}/input{name}.in", 'w')
+
+    for pop in fileDict:
+        fileOut = open(f"{folder}/input{pop}.in", 'w')
+        if sex:
+            fileToGWAMA.write(f"{folder}/input{pop}.in\t{fileDict[pop]['sex']}\n")
+        else:
+            fileToGWAMA.write(f"{folder}/input{pop}.in\n")
+        fileOut.write("MARKERNAME\tCHR\tPOS\tIMPUTED\tN\tEA\tNEA\tEAF\tBETA\tSE\n")
+        #fileOut.write("MARKERNAME\tCHR\tPOS\tIMPUTED\tN\tEA\tNEA\tEAF\tOR\tOR_95L\tOR_95U\n")
+        #fileOut.write("MARKERNAME\tCHR\tPOS\tIMPUTED\tN\tEA\tNEA\tOR\tOR_95L\tOR_95U\n")
+
+        hybrid = fileDict[pop]["hybrid"]
+
+        print(f"Open {hybrid} file")
+
+        fileHybrid = open(hybrid)
+        header = True
+
+        for line in fileHybrid:
+            if header:
+                dictColHeader = getPositionCol(line)
+                header = False
+            else:
+                split = line.strip().split()
+                if split[dictColHeader["OR"]] != "NA":
+                    ID = split[dictColHeader["ID"]]
+                    CHR = split[dictColHeader["Chrom"]]
+                    POS = split[dictColHeader["Pos"]]
+                    IMPUTED = statusDict[ID][pop]
+                    N = split[dictColHeader["N"]]
+                    EA = split[dictColHeader["Allele2"]]
+                    if EA == split[dictColHeader["Allele2"]]:
+                        NEA = split[dictColHeader["Allele1"]]
+                    else:
+                        NEA = split[dictColHeader["Allele2"]]
+
+                    if EA == freqDict[ID][pop]["ALT"]:
+                        EAF = freqDict[ID][pop]["ALT_FREQ"]
+                    else:
+                        EAF = 1-float(freqDict[ID][pop]["ALT_FREQ"])
+
+                    BETA = np.log(float(split[dictColHeader["OR"]]))
+                    SE = split[dictColHeader["SE"]]
+                    fileOut.write(f"{ID}\t{CHR}\t{POS}\t{IMPUTED}\t{N}\t{EA}\t{NEA}\t{EAF}\t{BETA}\t{SE}\n")
+        fileOut.close()
+    return f"{folder}/input{name}.in"
+
+def runGWAMABeta(fileGWAMA, gwama, folder, name, randomEffectCorrection, genomicControl, sex):
+    line = f"{gwama} -i {fileGWAMA} -o {folder}/{name} -qt"
+    if randomEffectCorrection:
+        line = f"{line} -r"
+    if genomicControl:
+        line = f"{line} -gc"
+    if sex:
+        line = f"{line} --sex"
+
+    execute(line)
+
+def runGWAMAOR(fileGWAMA, gwama, folder, name, randomEffectCorrection, genomicControl, sex):
+    line = f"{gwama} -i {fileGWAMA} -o {folder}/{name}"
+    if randomEffectCorrection:
+        line = f"{line} -r"
+    if genomicControl:
+        line = f"{line} -gc"
+    if sex:
+        line = f"{line} --sex"
+
+
+    execute(line)
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='GWAMA automatic')
+
+    required = parser.add_argument_group("Required arguments")
+    required.add_argument('-l', '--list', help='List of hybrid files. Format: <NAME> <HYBRID> <PGEN prefix file>',
+                          required=True)
+    required.add_argument('-f', '--folder', help='Output folder name', required=True)
+    required.add_argument('-n', '--name', help='Name to output file', required=True)
+
+    optional = parser.add_argument_group("Optional arguments")
+    optional.add_argument('-o', '--odds', help='Use OR instead BETA (Default: False)', default=False, action="store_true")
+    optional.add_argument('-F', '--firth', help='Signalize that we used firth on PLINK2', default=False,
+                          action="store_true")
+    optional.add_argument('-s', '--sex', help='Run gender-differentiated and gender-heterogeneity analysis (Default: False)', default=False,
+                          action="store_true")
+    optional.add_argument('-r', '--random', help='Random effect correction from GWAMA (Default: False)', default=False,
+                          action="store_true")
+    optional.add_argument('-g', '--genomic', help='Use genomic control for adjusting studies result files from GWAMA (Default: False)', default=False,
+                          action="store_true")
+
+    programs = parser.add_argument_group("Programs")
+    programs.add_argument('-G', '--gwama', help='Path to gwama', required=True)
+    programs.add_argument('-P', '--plink2', help='Path to PLINK2', required=True)
+    args = parser.parse_args()
+
+    execute(f"mkdir {args.folder}")
+
+    fileDict = openListFile(args.list, args.sex)
+    freqDict = calculateFrq(fileDict, args.plink2, args.folder)
+    statusDict = getStatus(fileDict)
+    if args.odds:
+        fileGWAMA = prepareInputGWAMAOR(fileDict, freqDict, statusDict, args.folder, args.name, args.sex)
+        runGWAMAOR(fileGWAMA, args.gwama, args.folder, args.name, args.random, args.genomic, args.sex)
+    else:
+        fileGWAMA = prepareInputGWAMABeta(fileDict, freqDict, statusDict, args.folder, args.name, args.sex)
+        runGWAMABeta(fileGWAMA, args.gwama, args.folder, args.name, args.random, args.genomic, args.sex)
+
+```
+</details>
+
+
+## Meta-analysis with Meta-regression: SAS PD GWASs and LPD   
+
+In order to assess the independency of LPD lead signal inside ITPKB gene, perform a random-effects meta-analysis coupled with MR-MEGA. Using all the availabe SAS PD GWASs and both LPD cohorts. 
+    
+To begin with, create the working directory to run the formal analysis
+
+    mkdir /home/Meta_LPD_SAS
+
+And create a sub-folder to parse the summary statistics for running GWAMA and MR-MEGA:
+
+    mkdir reformat_sumstats
+
+### Reformat summary statistics
+    
+Afterwards, inside the reformat_sumstats directory, download the summary statistics from the SAS PD GWASs by Kishore et al., 2025 and Andrews et al., 2024 from public repositories. And for LPD, use the reformated sumstats from SAIGE that were generated during the meta-analysis of LPD phase 1 and phase 2 (inputP1.in and inputP2.in)
+
+All summary statistics are in hg38
+    
+    cp /home/LPD_Meta-analysis/GWAMA_SAIGE/inputP*.in ./
+
+    
+Use the scripts below to parse each summary statistics accordignly.
+
+Please considert that Andrews et al., 2024 summary statistics lack a specific ID fo each variant. However, for the analysis a consistent marker ID is needed. Hence, a homogeneous ID for each marker across all the summary statistics needs to be constructed.
+    
+To parse Kishore et al., sumstats (append OR, 95%CI and change header names)
+
+<details>
+    <summary>Parse_Kishore_SAS_PD_GWAS.py</summary>
+            
+```python=
+import pandas as pd
+import numpy as np
+import gzip
+
+ 
+INPUT_FILE = "Kishore_SAS_PD_GWAS.txt"  # or .gz 
+OUTPUT_FILE = "Kishore_SAS_PD_GWAS_modified.txt"
+EXCLUDED_ROWS_FILE = "excluded_rows_kishore_gwas.txt" # must be empty, just to double check
+EXCLUSION_SUMMARY_FILE = "exclusion_summary_kishore_gwas.txt"  # must be empty, just to double check
+
+
+if INPUT_FILE.endswith(".gz"):
+    with gzip.open(INPUT_FILE, 'rt') as f:
+        df = pd.read_csv(f, sep="\t")
+else:
+    df = pd.read_csv(INPUT_FILE, sep="\t")
+
+# Add sample size column
+df["N"] = 11170
+
+
+# Compute new OR and 95% CI 
+df["OR"] = np.exp(df["BETA"])
+df["OR_95U"] = np.exp(df["BETA"] + 1.96 * df["SE"])
+df["OR_95L"] = np.exp(df["BETA"] - 1.96 * df["SE"])
+
+#  Rename columns 
+df = df.rename(columns={
+    "SNP": "MARKERNAME",
+    "A1": "EA",
+    "A2": "NEA"
+})
+
+#  Reorder columns 
+final_cols = ["MARKERNAME", "CHR", "POS", "N", "EA", "NEA", "EAF", "OR", "OR_95L", "OR_95U"]
+df = df[final_cols]
+
+# Handle missing values 
+is_missing = df.isnull()
+excluded_rows = df[is_missing.any(axis=1)].copy()
+included_rows = df.dropna()
+
+
+with open(EXCLUDED_ROWS_FILE, "w") as excl_file:
+    excl_file.write("ID\tMissing_Columns\n")
+    for idx, row in excluded_rows.iterrows():
+        missing_cols = is_missing.loc[idx]
+        missing_fields = ",".join(missing_cols[missing_cols].index)
+        excl_file.write(f"{row['ID']}\t{missing_fields}\n")
+
+
+missing_summary = is_missing.sum()
+missing_summary = missing_summary[missing_summary > 0]
+with open(EXCLUSION_SUMMARY_FILE, "w") as summary_file:
+    summary_file.write("Column\tMissing_Entries\n")
+    for col, count in missing_summary.items():
+        summary_file.write(f"{col}\t{count}\n")
+
+
+included_rows.to_csv(OUTPUT_FILE, sep="\t", index=False)
+
+
+
+```
+</details>
+
+To construct the new variant ID specifically for LPD and Kishore sumstats
+
+<details>
+    <summary>Create_newVariantID_LPD_Kishore.py</summary>
+            
+```python=
+
+import pandas as pd
+from pathlib import Path
+
+# 1) List the files you want to process
+files = [
+    "inputP1.in",
+    "inputP2.in",
+    "Kishore_SAS_PD_GWAS_modified.txt"
+]
+
+for filepath in files:
+    path = Path(filepath)
+
+    # 2) Read in the file 
+    df = pd.read_csv(path, sep="\t")
+
+    # 3) Rebuild the MARKERNAME column
+    #    This overwrites the existing column in place
+    df["MARKERNAME"] = (
+        "chr"
+        + df["CHR"].astype(str)  
+        + ":"
+        + df["POS"].astype(str)  
+        + ":"
+        + df["NEA"]             
+        + ":"
+        + df["EA"]         
+    )
+
+    # 4) (Optional) Re-order so MARKERNAME is first
+    cols = ["MARKERNAME"] + [c for c in df.columns if c != "MARKERNAME"]
+    df = df[cols]
+
+    # 5) Write out to a new file
+    out = path.with_name(path.stem + "_new_snpID" + path.suffix)
+    df.to_csv(out, sep="\t", index=False)
+   
+
+```
+</details>
+
+To parse Andrews et al., 2024 sumstats (append OR, 95%CI, create variant ID and change header names):
+    
+<details>
+    <summary>Parse_Andrews_SAS_PD_GWAS.py</summary>
+            
+```python=
+import pandas as pd
+import numpy as np
+import gzip
+
+
+INPUT_FILE = "Andrews_SAS_PD_GWAS.txt"  # or .gz #the zipped file should not output any excluded rows because the one that has missing values is the plain .txt file 
+OUTPUT_FILE = "Andrews_SAS_PD_GWAS_modified.txt"
+EXCLUDED_ROWS_FILE = "excluded_rows_other_indian_gwas_with_P.txt" #must be empty, just to double check
+EXCLUSION_SUMMARY_FILE = "exclusion_summary_other_indian_gwas_with_P.txt" #must be empty, jut to double check
+
+if INPUT_FILE.endswith(".gz"):
+    with gzip.open(INPUT_FILE, 'rt') as f:
+        # any run of spaces or tabs splits into columns
+        df = pd.read_csv(f, delim_whitespace=True)
+else:
+    df = pd.read_csv(INPUT_FILE, delim_whitespace=True)
+
+#  Add sample size column 
+df["N"] = 1878
+
+#  Compute new OR and 95% CI 
+df["OR"] = np.exp(df["BETA"])
+df["OR_95U"] = np.exp(df["BETA"] + 1.96 * df["SE"])
+df["OR_95L"] = np.exp(df["BETA"] - 1.96 * df["SE"])
+
+#  Rename columns 
+df = df.rename(columns={
+    'BP': 'POS',
+    'A1': 'EA',
+    'A2': 'NEA',
+    'MAF': 'EAF'
+})
+
+df['MARKERNAME'] = (
+    'chr' 
+    + df['CHR'].astype(str) 
+    + ':' 
+    + df['POS'].astype(str) 
+    + ':' 
+    + df['NEA'] 
+    + ':' 
+    + df['EA']
+)
+
+#  Reorder columns 
+final_cols = ["MARKERNAME", "CHR", "POS", "P", "N", "EA", "NEA", "EAF", "OR", "OR_95L", "OR_95U"]
+df = df[final_cols]
+
+#  Handle missing values 
+is_missing = df.isnull()
+excluded_rows = df[is_missing.any(axis=1)].copy()
+included_rows = df.dropna()
+
+
+with open(EXCLUDED_ROWS_FILE, "w") as excl_file:
+    excl_file.write("ID\tMissing_Columns\n")
+    for idx, row in excluded_rows.iterrows():
+        missing_cols = is_missing.loc[idx]
+        missing_fields = ",".join(missing_cols[missing_cols].index)
+        excl_file.write(f"{row['ID']}\t{missing_fields}\n")
+
+
+missing_summary = is_missing.sum()
+missing_summary = missing_summary[missing_summary > 0]
+with open(EXCLUSION_SUMMARY_FILE, "w") as summary_file:
+    summary_file.write("Column\tMissing_Entries\n")
+    for col, count in missing_summary.items():
+        summary_file.write(f"{col}\t{count}\n")
+
+
+included_rows.to_csv(OUTPUT_FILE, sep="\t", index=False)
+
+```
+</details>
+
+### Run GWAMA with LPDs and SAS PD GWASs
+
+Create the input file for GWAMA with the path to the summary statistics 
+    
+    > gwama.in
+    
+    /home/Meta_LPDs_SAS/reformat_sumstats_inputP1.in
+    /home/Meta_LPDs_SAS/reformat_sumstats_inputP2.in
+    /home/Meta_LPDs_SAS/Kishore_SAS_PD_GWAS_modified.txt
+    /home/Meta_LPDs_SAS/Andrews_SAS_PD_GWAS_modified.txt
+    
+And run a random-effects meta-analysis with double genomic control (we decided this based on significant inflation when genomic control was not applied)
+    
+    /home/programs/GWAMA -i gwama.in -o Meta-random_LPDs_SASs -r -gc -gco
+
+### Run MR-MEGA with LPDs and SAS PD GWASs
+
+Create the input file for MR-MEGA with the path to the summary statistics 
+    
+    > MR-MEGA.in
+    
+    /home/Meta_LPDs_SAS/reformat_sumstats_inputP1.in_new_snpID.txt
+    /home/Meta_LPDs_SAS/reformat_sumstats_inputP2.in_new_snpID.txt
+    /home/Meta_LPDs_SAS/Kishore_SAS_PD_GWAS_modified_new_snpID.txt
+    /home/Meta_LPDs_SAS/Andrews_SAS_PD_GWAS_modified.txt
+
+Then run MR-MEGA with double genomic control as well and specifying the names of the chromosome and position columns (MR-MEGA assumes different strings here than GWAMA)
+    
+    /home/programs/MR-MEGA -i MR-MEGA_input.in --pc 1 -o MR-MEGA_LPDs_SASs --name_chr CHR --name_pos POS --debug --gc --gco
+    
+## Fine Mapping 
+
+Leveraging the bayes factor that MR-MEGA outputs, we performed bayesian fine mapping building the 95% and 99% credible sets for the genomic risk region of ITPKB.
+
+First, create the working directory
+    
+    mkdir /home/Fine_Mapping
+
+Then after performing MR-MEGA and uploading it to FUMA, download the results from FUMA portal
+
+To perform bayesian fine mapping through the construction of 95% and 99% credible sets based on the posterior probability of each snp being the putative causal variant. 
+    
+    python fine_map.py --fuma-dir ./ --mrmega-file /home/Meta_LPD_SAS/run_MR-MEGA_LPDs_SAS/MR-MEGA_LPDs_SASs --out-dir ./fine_mapping_results/
+
+<details>
+    <summary>fine_map.py</summary>
+            
+```python=
+
+import os
+import argparse
+import pandas as pd
+import numpy as np
+from scipy.stats import chi2
+
+
+def load_fuma_and_summary(fuma_dir: str, mrmega_file: str):
+    """
+    Load FUMA risk-locus definitions and MR-MEGA summary statistics.
+    """
+    loci_path = os.path.join(fuma_dir, "GenomicRiskLoci.txt")
+    if not os.path.exists(loci_path):
+        raise FileNotFoundError(f"Cannot find FUMA loci file at {loci_path}")
+    loci = pd.read_csv(loci_path, delim_whitespace=True)
+
+    if not os.path.exists(mrmega_file):
+        raise FileNotFoundError(f"Cannot find MR-MEGA file at {mrmega_file}")
+    sumstat = pd.read_csv(
+        mrmega_file,
+        delim_whitespace=True,
+        compression='infer',
+        engine='c'
+    )
+    return loci, sumstat
+
+
+def finemap_locus(loci_df, sumstat_df):
+    """
+    Compute 95% and 99% credible sets for each locus based on Bayes Factors.
+    Returns report, cs95_df, cs99_df.
+    """
+    # Convert lnBF to BF
+    sumstat_df['BF'] = np.exp(sumstat_df['lnBF'])
+    report_rows = []
+    cs95_list = []
+    cs99_list = []
+    grouped = {chrom: df for chrom, df in sumstat_df.groupby('Chrom')}
+
+    for idx, row in loci_df.iterrows():
+        chrom = row['chr']
+        start = row['start']
+        end = row['end']
+        df_chr = grouped.get(chrom)
+        if df_chr is None:
+            continue
+        window = df_chr[(df_chr['Pos'] >= start) & (df_chr['Pos'] <= end)].copy()
+        window = window.sort_values('BF', ascending=False).reset_index(drop=True)
+        total_bf = window['BF'].sum()
+
+        # 95% credible set
+        cum = 0.0
+        sel95 = []
+        for i, bf in enumerate(window['BF']):
+            cum += bf
+            sel95.append(i)
+            if cum / total_bf >= 0.95:
+                break
+        cs95 = window.loc[sel95].copy()
+        cs95['PP'] = cs95['BF'] / total_bf
+        cs95['Locus'] = idx + 1
+        cs95_list.append(cs95)
+
+        # 99% credible set
+        cum = 0.0
+        sel99 = []
+        for i, bf in enumerate(window['BF']):
+            cum += bf
+            sel99.append(i)
+            if cum / total_bf >= 0.99:
+                break
+        cs99 = window.loc[sel99].copy()
+        cs99['PP'] = cs99['BF'] / total_bf
+        cs99['Locus'] = idx + 1
+        cs99_list.append(cs99)
+
+        # Collect SNP lists per locus
+        snps95 = window.loc[sel95, 'MarkerName'] if 'MarkerName' in window.columns else window.loc[sel95, 'rs_number']
+        snps99 = window.loc[sel99, 'MarkerName'] if 'MarkerName' in window.columns else window.loc[sel99, 'rs_number']
+
+        report_rows.append({
+            'Locus': idx + 1,
+            'NumSNPs': window.shape[0],
+            'NumSNPs_in_95%': len(sel95),
+            'NumSNPs_in_99%': len(sel99),
+            'SNPs_in_95%': ';'.join(snps95.astype(str)),
+            'SNPs_in_99%': ';'.join(snps99.astype(str))
+        })
+
+    report = pd.DataFrame(report_rows)
+    cs95_df = pd.concat(cs95_list, ignore_index=True) if cs95_list else pd.DataFrame()
+    cs99_df = pd.concat(cs99_list, ignore_index=True) if cs99_list else pd.DataFrame()
+    return report, cs95_df, cs99_df
+
+
+def annotate_with_fuma(cs_df, fuma_dir: str):
+    """
+    Annotate a credible-set DataFrame with FUMA snp annotations.
+    """
+    snp_file = os.path.join(fuma_dir, 'snps.txt')
+    if not os.path.exists(snp_file):
+        raise FileNotFoundError(f"Cannot find FUMA SNP file at {snp_file}")
+    fuma = pd.read_csv(snp_file, delim_whitespace=True)
+    fuma = fuma.rename(columns={'chr': 'CHR', 'pos': 'BP'})
+    annotated = cs_df.merge(
+        fuma,
+        left_on=['Chrom', 'Pos'],
+        right_on=['CHR', 'BP'],
+        how='left'
+    )
+    return annotated
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Fine-map MR-MEGA results using FUMA loci.")
+    parser.add_argument('--fuma-dir', required=True, help='Path to FUMA output directory')
+    parser.add_argument('--mrmega-file', required=True, help='Path to MR-MEGA summary stats (.tsv.gz)')
+    parser.add_argument('--out-dir', default='output', help='Directory for fine-mapping outputs')
+    args = parser.parse_args()
+
+    os.makedirs(args.out_dir, exist_ok=True)
+
+    loci, sumstat = load_fuma_and_summary(args.fuma_dir, args.mrmega_file)
+    report, cs95, cs99 = finemap_locus(loci, sumstat)
+
+    # Save reports
+    report_file = os.path.join(args.out_dir, 'finemap_report.tsv')
+    cs95_file   = os.path.join(args.out_dir, 'finemap_cs_95.tsv')
+    cs99_file   = os.path.join(args.out_dir, 'finemap_cs_99.tsv')
+    report.to_csv(report_file, sep='\t', index=False)
+    cs95.to_csv(cs95_file, sep='\t', index=False)
+    cs99.to_csv(cs99_file, sep='\t', index=False)
+
+    # Annotate credible sets
+    annotated95 = annotate_with_fuma(cs95, args.fuma_dir)
+    annotated99 = annotate_with_fuma(cs99, args.fuma_dir)
+    annotated95_file = os.path.join(args.out_dir, 'finemap_cs_95_annot.tsv')
+    annotated99_file = os.path.join(args.out_dir, 'finemap_cs_99_annot.tsv')
+    annotated95.to_csv(annotated95_file, sep='\t', index=False)
+    annotated99.to_csv(annotated99_file, sep='\t', index=False)
+
+    # Identify singleton loci and their rsIDs
+    single95_loci = report[report['NumSNPs_in_95%'] == 1]['Locus']
+    single95_snps = cs95[cs95['Locus'].isin(single95_loci)][['Locus', 'rs_number']]
+    single95_snps = single95_snps.rename(columns={'rs_number': 'rsID'})
+    single95_file = os.path.join(args.out_dir, 'singleton_loci_95.tsv')
+    single95_snps.to_csv(single95_file, sep='\t', index=False)
+
+    single99_loci = report[report['NumSNPs_in_99%'] == 1]['Locus']
+    single99_snps = cs99[cs99['Locus'].isin(single99_loci)][['Locus', 'rs_number']]
+    single99_snps = single99_snps.rename(columns={'rs_number': 'rsID'})
+    single99_file = os.path.join(args.out_dir, 'singleton_loci_99.tsv')
+    single99_snps.to_csv(single99_file, sep='\t', index=False)
+
+if __name__ == "__main__":
+    main()
+
+
+   
+
+```
+</details>
+    
+
 # Folder structure
 For visual clarity, we just listed files that are mentioned in any command line. A lot of steps produces multiples intermediary files that was ommited.
 ```bash
@@ -818,6 +1905,63 @@ home/
 |             └── Phase2/
 |                 └── AM_Results
 |                     └── AM_Phase2_CHROM<chrom>_<anc>.csv
+|
+|
+|
+|
+|── LPD_meta-analysis/
+|    ├── SAIGE_P1_ALL_1-10_N.txt
+|    ├── SAIGE_P2_ALL_1-10_N.txt
+|    ├── ATT_P2_ALL_1-10_N.txt 
+|    ├── ATT_P2_ALL_1-10_N.txt
+|    ├── TRACTOR_NAT_P2_ALL_1-10_N.txt
+|    ├── TRACTOR_NAT_P2_ALL_1-10_N.txt
+|    ├── TRACTOR_AFR_P2_ALL_1-10_N.txt
+|    ├── TRACTOR_AFR_P2_ALL_1-10_N.txt
+|    ├── TRACTOR_EUR_P2_ALL_1-10_N.txt
+|    ├── TRACTOR_EUR_P2_ALL_1-10_N.txt
+|    ├── GWAMA_SAIGE
+|    |    └── GWAMA_SAIGE_results
+|    |    └── inputP1.in
+|    |    └── inputP2.in
+|    ├── GWAMA_ATT
+|    |    └── GWAMA_ATT_results
+|    |    └── inputP1.in
+|    |    └── inputP2.in
+|    ├── GWAMA_TRACTOR_NAT
+|    |    └── GWAMA_TRACTOR_NAT_results
+|    |    └── inputP1.in
+|    |    └── inputP2.in
+|    ├── GWAMA_TRACTOR_AFR
+|    |    └── GWAMA_TRACTOR_AFR_results
+|    |    └── inputP1.in
+|    |    └── inputP2.in
+|    ├── GWAMA_TRACTOR_EUR
+|    |    └── GWAMA_TRACTOR_EUR_results
+|    |    └── inputP1.in
+|    |    └── inputP2.in
+|
+|
+|── Meta_LPDs_SAS/
+|    ├── run_GWAMA_LPDs_SAS
+|    ├── run_MR-MEGA_LPDs_SAS
+|    ├── reformat_sumstats
+|    |    └── inputP1.in
+|    |    └── inputP2.in
+|    |    └── inputP1.in_new_snpID.txt
+|    |    └── inputP2.in_new_snpID.txt
+|    |    └── Kishore_SAS_PD_GWAS_modified.txt
+|    |    └── Kishore_SAS_PD_GWAS_modified_new_snpID.txt
+|    |    └── Andrews_SAS_PD_GWAS.txt
+|    |    └── Andrews_SAS_PD_GWAS_modified.txt
+|
+|
+|── Fine_Mapping/
+|    ├── FUMA_jobID.zip
+|    ├── fine_mapping_results
+|    |      └── finemap_report.tsv
+|    
+|
 ├── references/
 |    ├── AllRef.txt
 |    ├── Parentals
@@ -843,6 +1987,8 @@ home/
      ├── admixture
      ├── gcta
      ├── bcftools
+     ├── GWAMA
+     ├── MR-MEGA
      └── gnomix
           └── gnomix.py
 ```
