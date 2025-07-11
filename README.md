@@ -1,4 +1,12 @@
 # LARGE-PD_Phase2_Paper
+
+`GP2 ❤️ Open Science 😍`
+
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.15794660.svg)](https://doi.org/10.5281/zenodo.15794660)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+**Last Updated:** June 2025
+
 This repository contains a detailed description of all analyses performed as part of the LARGE-PD Phase 2 manuscript. The Latin American Research Consortium on the Genetics of Parkinson’s Disease (LARGE-PD) is an international collaborative effort aimed at understanding the genetic architecture of Parkinson's disease in Latin American populations, with a particular focus on admixed and underrepresented groups.
 
 The analyses documented here include:
