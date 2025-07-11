@@ -1807,12 +1807,11 @@ def main():
 if __name__ == "__main__":
     main()
 
-
-   
-
 ```
 </details>
     
+
+The meta-analysis, MR-MEGA and fine mapping was performed by Felipe Duarte Zambrano (felipe.dz.101@gmail.com).
 
 # Folder structure
 For visual clarity, we just listed files that are mentioned in any command line. A lot of steps produces multiples intermediary files that was ommited.
@@ -2012,3 +2011,8 @@ home/
 | Mata Lab PCA       |         | [https://github.com/MataLabCCF/ProjectedPCAAndModelSelection](https://github.com/MataLabCCF/ProjectedPCAAndModelSelection)                   |      | Automated pipeline to perform PCA                                                                          |
 | Mata Lab Admixture |         | [https://github.com/MataLabCCF/AdmixtureWithReference](https://github.com/MataLabCCF/AdmixtureWithReference)                                 |      | Automated pipeline to perform supervised ADMIXTURE                                                         |
 | Mata Lab AM        |         | [https://github.com/MataLabCCF/GenesisAM](https://github.com/MataLabCCF/GenesisAM)                                                           |      | Automated pipeline to perform Admixture Mapping                                                            |
+
+
+## Acknowledgements
+This work is supported by NIH Grant R01 1R01NS112499-01A1, MJFF Grant ID: 18298, ASAP-GP2, Parkinson’s Foundation, and  Veterans Affair Puget Sound Healthcare System (5I01ABX005978-2).
+
