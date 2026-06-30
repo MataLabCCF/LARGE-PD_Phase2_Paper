@@ -519,7 +519,8 @@ You can find the configBest.yaml and the pre-trained models at https://github.co
 - SAIGE GWAS installed (https://saigegit.github.io/SAIGE-doc/)
 - GENESIS installed (https://rdrr.io/bioc/GENESIS/)
 - king installed
-- Admix-kit installed (https://github.com/KangchengHou/admix-kit)
+~~- Admix-kit installed (https://github.com/KangchengHou/admix-kit)~~
+- TUPAn (to run TRACTOR) 
 - Python3
 
 ## SAIGE GWAS
@@ -574,139 +575,20 @@ Rscript step2_SPAtests.R \
 --AlleleOrder=ref-first --chrom=chr22
 ```
 
-## Admix-kit analysis
+## TUPAn analysis
 
-TRACTOR and ATT was performed using the Admix-kit
+During the review process, we discovered that approximately 30% of our associations were being lost because of quasi-Newton separation issues in `tinygwas` (the library used by `admix-kit`). To address this problem, we implemented our own version of TRACTOR in the TUPAn framework (https://github.com/MataLabCCF/TUPAn/) and developed the script `bot.py` to parallelize the analyses.
 
-### Prepare the data
+The pipeline performs all required preprocessing steps automatically and does not require any additional data preparation by the user. The `bot.py` script was designed to run in a SLURM environment.
 
-```python=
-import os
+The pipeline uses R to run fastglm (https://cran.r-project.org/web/packages/fastglm/index.html) and logistf(https://cran.r-project.org/web/packages/logistf/index.html).
 
-#Setting folders
-plink2 = f"/home/programs/plink2"
-pgenFolder = f"/home/output/Association/AK/PGEN/"
-infoFolder = f"/home/input/Demographic/covarToAK.txt "
-outFolder = f"/home/output/Association/AK/Results/"
-imputationFolder = f"/home/input/Imputed/"
-mspFolder = f"/home/output/LA/Inference/LPD_chrom{chrom}/query_results.msp"
-#removeToAK.txtis the NAToRA relationship file + outliers 
-relationship = "/home/output/Association/AK/removeToAK.txt"
-
-os.system(f"mkdir {outFolder}\n")
-os.system(f"mkdir {pgenFolder}\n")
-os.system(f"{plink2} --vcf {imputationFolder}/chr{i}.dose.vcf.gz "
-            f"--remove {relationship} --make-pgen "
-            f"--out {pgenFolder}/LPD_{i} "
-            f" --maf 0.005 --max-alleles 2 --rm-dup exclude-all "
-            F"--snps-only --set-missing-var-ids @:#:\\$r:\\$a\n")
-os.system(f"python3.8 newMSP.py -p {pgenFolder}/LPG_{i}.psam "
-            f"-m {mspFolder} -o {pgenFolder}/MSP_{i}.msp")
-os.system(f"admix lanc-convert {pgenFolder}/LPG_{i} "
-            f"--rfmix {pgenFolder}/MSP_{i}.msp --out "
-            f"{pgenFolder}/LPG_{i}.lanc\n")
+```bash
+python bot.py
 ```
 
+> **Note:** We do not recommend using this pipeline for very large datasets because it has not yet been fully optimized (e.g., no pre-fitting step and no block-wise analysis).
 
-The newMSP is a script that build a msp with the samples that are listed on psam file.
-
-    
-<details>
-    <summary>newMSP.py</summary>
-            
-```python=
-import argparse
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='newMSP')
-
-    requiredGeneral = parser.add_argument_group("Required arguments")
-    requiredGeneral.add_argument('-p', '--psam', help='PSAM file', required=True)
-    requiredGeneral.add_argument('-m', '--msp', help='MSP file', required=True)
-    requiredGeneral.add_argument('-o', '--output', help='Name of output folder', required=True)
-    
-    args = parser.parse_args()
-    
-    file = open(f"{args.psam}")
-    header = True
-    
-    sampleList = []
-    
-    for line in file:
-        if header:
-            header = False
-        else:
-            split = line.strip().split()
-            sampleList.append(split[0])
-    
-    file.close()
-    fileIn = open(args.msp)
-    fileOut = open(args.output, "w")
-    
-    dictIDs = {}
-    
-    header = True
-    for line in fileIn:
-        if header:
-            if "#chm" in line:
-                IDs = line.strip().split("\t")
-                for i in range(6, len(IDs),2):
-                    IDComponent = IDs[i].split(".")
-                    IDNoHap = IDComponent[0]
-                    for j in range(1, len(IDComponent)-1):
-                        IDNoHap = IDNoHap+f".{IDComponent[j]}"
-#                    print(f"{IDs[i]} - {IDNoHap}")
-                    dictIDs[IDNoHap] = i
-                    
-                #Header of new MSP
-                
-                fileOut.write(f"{IDs[0]}")
-                for i in range(1,6):
-                    fileOut.write(f"\t{IDs[i]}")
-                    
-                for sample in sampleList:
-                    fileOut.write(f"\t{sample}.0\t{sample}.1")
-                fileOut.write("\n")
-                
-                header = False
-            else:
-                fileOut.write(line)
-        else:
-            data = line.strip().split("\t")
-            fileOut.write(f"{data[0].replace('chr', '')}")
-            for i in range(1,6):
-                fileOut.write(f"\t{data[i]}")
-            for sample in sampleList:
-                index = dictIDs[sample]
-                fileOut.write(f"\t{data[index]}\t{data[index+1]}")
-            fileOut.write("\n")
-            
-    fileOut.close()
-
-for ID in dictIDs:
-	print(f"{ID}: {dictIDs[ID]}")
-
-```
-</details>
-    
-### Run TRACTOR and ATT
-
-```python=
-import os
-
-for i in range(22,0, -1):
-    for method in ["ADM", "ATT", "TRACTOR"]:
-        plink2 = f"/home/programs/plink2"
-        pgenFolder = f"/home/output/Association/AK/PGEN/"
-        infoFolder = f"/home/input/Demographic/covarToAK.txt "
-        outFolder = f"/home/output/Association/AK/Results/"
-        os.system(f"admix assoc --pfile {pgenFolder}/LPD_{i} "
-                    f"--family binary --pheno {infoFolder}/Covar.txt "
-                    f"--method {method} --quantile-normalize True "
-                    f"--out {outFolder}/LPD_{method}_{i}")
-```
-
-It is mandatory IID on the first column, and phenotype on the second collumn on Covar.txt. All other collumns will be included on the model as covariate.
 
 ## Admixture mapping
 
@@ -726,7 +608,7 @@ Note: The author of the python scripts (Thiago Peixoto Leal) apologizes for not 
 
 ## Meta-analysis with GWAMA
 ### General framework
-
+ 
 First, create the working directory for the meta-analysis 
 ```
 mkdir LPD_meta-analysis/
