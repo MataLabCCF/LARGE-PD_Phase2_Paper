@@ -519,8 +519,8 @@ You can find the configBest.yaml and the pre-trained models at https://github.co
 - SAIGE GWAS installed (https://saigegit.github.io/SAIGE-doc/)
 - GENESIS installed (https://rdrr.io/bioc/GENESIS/)
 - king installed
-  
-~~- Admix-kit installed (https://github.com/KangchengHou/admix-kit)~~
+
+ ~~- Admix-kit installed (https://github.com/KangchengHou/admix-kit)~~
 - TUPAn (to run TRACTOR) 
 - Python3
 
